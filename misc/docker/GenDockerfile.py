@@ -31,7 +31,7 @@ RUN apt-get install -y {base_packages} && \\
     apt-get install -y {travis_packages}
 """.format(AddSources = "".join(Sources), base_packages = " ".join(base_packages), travis_packages=" ".join(travis_packages))
 
-Checkout = "RUN git clone --depth=50 --branch=${branch} https://github.com/jmmartinez/easy-just-in-time.git easy-just-in-time && cd easy-just-in-time\n"
+Checkout = "RUN git clone --depth=50 --branch=${branch} https://github.com/luo-cheng2021/easy-just-in-time.git easy-just-in-time && cd easy-just-in-time\n"
 BeforeInstall = "".join(["RUN cd /easy-just-in-time && {0} \n".format(cmd) for cmd in before_install]) 
 Run = "RUN cd easy-just-in-time && \\\n" + "".join(["  {cmd} && \\ \n".format(cmd=cmd) for cmd in script]) + "  echo ok!"
 
