@@ -19,8 +19,10 @@ struct type_list {
   template<class _>
   using remove = type_list<>;
   template<class _>
-  static constexpr bool has = false;
-
+  class has_trait {
+  public:
+    static constexpr bool has = false;
+  };
   // undefined
   template<size_t _>
   using at = void;
@@ -53,7 +55,11 @@ struct type_list<Head, Tail ...> {
                                     typename tail::template remove<T>,
                                     typename tail::template remove<T>::template push_front<head>>;
   template<class T>
-  static constexpr bool has = std::is_same<T, head>::value || tail:: template has<T>;
+  class has_trait
+  {
+  public:
+    static constexpr bool has = std::is_same<T, head>::value || tail:: template has_trait<T>::has;
+  };
 
   static constexpr size_t size = 1+tail::size;
   static constexpr bool empty = false;
@@ -122,7 +128,8 @@ struct max_placeholder {
   struct helper<AL, false, Max> {
     using head = typename AL::head;
     using tail = typename AL::tail;
-    static constexpr size_t max = helper<tail, tail::empty, std::max<size_t>(is_ph<head>::value, Max)>::max;
+    //static constexpr size_t max = helper<tail, tail::empty, std::max<size_t>(is_ph<head>::value, Max)>::max;
+    static constexpr size_t max = helper<tail, tail::empty, size_t(is_ph<head>::value > Max ? is_ph<head>::value : Max)>::max;
   };
 
   static constexpr size_t max = helper<ArgList, ArgList::empty, 0>::max;
@@ -135,7 +142,7 @@ struct map_placeholder_to_type {
   struct helper {
     static_assert(Seen::size == N, "Seen::size != N");
     static_assert(Result::size == N, "Result::size != N");
-    static_assert(!Result::template has<void>, "Void cannot appear in the resulting type");
+    static_assert(!Result::template has_trait<void>::has, "Void cannot appear in the resulting type");
     using type = Result;
   };
 
@@ -144,7 +151,7 @@ struct map_placeholder_to_type {
     using al_head = typename AL::head;
     using al_tail = typename AL::tail;
 
-    static bool constexpr parse_placeholder = is_ph<al_head>::value && !Seen::template has<al_head>;
+    static bool constexpr parse_placeholder = is_ph<al_head>::value && !Seen::template has_trait<al_head>::has;
     static size_t constexpr result_idx = parse_placeholder?is_ph<al_head>::value-1:0;
     static size_t constexpr arg_idx = PL::size - AL::size;
     using pl_at_idx = typename PL::template at<arg_idx>;

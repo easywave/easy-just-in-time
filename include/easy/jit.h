@@ -20,8 +20,22 @@ WrapFunction(std::unique_ptr<Function> F, meta::type_list<Ret, Params ...>) {
   return FunctionWrapper<Ret(Params ...)>(std::move(F));
 }
 
+template<typename T>
+using _FunOriginalTy = std::remove_pointer_t<std::decay_t<T>>;
 template<class T, class ... Args>
-auto jit_with_context(easy::Context const &C, T &&Fun) {
+using _new_type_traits = meta::new_function_traits<_FunOriginalTy<T>, meta::type_list<Args...>>;
+template<class T, class ... Args>
+using _new_return_type = typename _new_type_traits<T, Args...>::return_type;
+template<class T, class ... Args>
+using _new_parameter_types = typename _new_type_traits<T, Args...>::parameter_list;
+template<class T, class ... Args>
+using FuncType = decltype(WrapFunction(0, 
+                            typename _new_parameter_types<T, Args...>::template 
+                            push_front<_new_return_type<T, Args...>> ()));
+
+template<class T, class ... Args>
+FuncType<T, Args...>
+jit_with_context(easy::Context const &C, T &&Fun) {
 
   auto* FunPtr = meta::get_as_pointer(Fun);
   using FunOriginalTy = std::remove_pointer_t<std::decay_t<T>>;
@@ -58,7 +72,8 @@ easy::Context get_context_for(Args&& ... args) {
 }
 
 template<class T, class ... Args>
-auto EASY_JIT_COMPILER_INTERFACE jit(T &&Fun, Args&& ... args) {
+FuncType<T, Args...>
+EASY_JIT_COMPILER_INTERFACE jit(T &&Fun, Args&& ... args) {
   auto C = get_context_for<T, Args...>(std::forward<Args>(args)...);
   return jit_with_context<T, Args...>(C, std::forward<T>(Fun));
 }

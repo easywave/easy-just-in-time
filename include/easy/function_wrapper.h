@@ -54,6 +54,7 @@ template<class Ret, class ... Params>
 class FunctionWrapper<Ret(Params...)> :
     public FunctionWrapperBase {
   public:
+  using FunctionType = Ret(__cdecl *)(Params...);
   FunctionWrapper(std::unique_ptr<Function> F)
     : FunctionWrapperBase(std::move(F)) {}
 
@@ -62,7 +63,7 @@ class FunctionWrapper<Ret(Params...)> :
     return getFunctionPointer()(std::forward<Args>(args)...);
   }
 
-  auto getFunctionPointer() const {
+  FunctionType getFunctionPointer() const {
     return ((Ret(__cdecl *)(Params...))getRawPointer());
   }
 
@@ -77,6 +78,7 @@ template<class ... Params>
 class FunctionWrapper<void(Params...)> :
     public FunctionWrapperBase {
   public:
+  using FunctionType = void(__cdecl *)(Params...);
   FunctionWrapper(std::unique_ptr<Function> F)
     : FunctionWrapperBase(std::move(F)) {}
 
@@ -85,7 +87,7 @@ class FunctionWrapper<void(Params...)> :
     return getFunctionPointer()(std::forward<Args>(args)...);
   }
 
-  auto getFunctionPointer() const {
+  FunctionType getFunctionPointer() const {
     return ((void(__cdecl *)(Params...))getRawPointer());
   }
 

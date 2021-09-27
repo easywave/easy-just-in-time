@@ -182,8 +182,8 @@ class Context {
     return DebugFile_;
   }
 
-  auto begin() const { return ArgumentMapping_.begin(); }
-  auto end() const { return ArgumentMapping_.end(); }
+  std::vector<std::unique_ptr<ArgumentBase>>::const_iterator begin() const { return ArgumentMapping_.begin(); }
+  std::vector<std::unique_ptr<ArgumentBase>>::const_iterator end() const { return ArgumentMapping_.end(); }
   size_t size() const { return ArgumentMapping_.size(); }
 
   ArgumentBase const& getArgumentMapping(size_t i) const {

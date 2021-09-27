@@ -1,8 +1,68 @@
 
 #include <benchmark/benchmark.h>
-#include <easy/code_cache.h>
+//#include <easy/code_cache.h>
+#include <easy/jit.h>
 #include <numeric>
 #include <algorithm>
+#include <functional>
+#include <immintrin.h>
+#include <math.h>
+
+/* Horizontal add works within 128-bit lanes. Use scalar ops to add
+ * across the boundary. */
+static double reduce_vector1(__m256d input) {
+  __m256d temp = _mm256_hadd_pd(input, input);
+  return ((double*)&temp)[0] + ((double*)&temp)[2];
+}
+
+/* Another way to get around the 128-bit boundary: grab the first 128
+ * bits, grab the lower 128 bits and then add them together with a 128
+ * bit add instruction. */
+static double reduce_vector2(__m256d input) {
+  __m256d temp = _mm256_hadd_pd(input, input);
+  __m128d sum_high = _mm256_extractf128_pd(temp, 1);
+  __m128d result = _mm_add_pd(sum_high, _mm256_castpd256_pd128(temp));
+  return ((double*)&result)[0];
+}
+
+double __attribute__((noinline)) dot_product(const double *a, const double *b, int N) 
+{
+  __m256d sum_vec = _mm256_set_pd(0.0, 0.0, 0.0, 0.0);
+  //__m256i aa, b, c;
+  //c = mm256_hadd_epi16(a, b);
+  __m128i index = {0};
+
+  /* Add up partial dot-products in blocks of 256 bits */
+  for(int ii = 0; ii < N/4; ++ii) {
+    
+    __m256d x = _mm256_load_pd(a+4*ii);
+    //x = _mm256_i32gather_pd(a, index, 1);
+    __m256d y = _mm256_load_pd(b+4*ii);
+    __m256d z = _mm256_mul_pd(x,y);
+    sum_vec = _mm256_add_pd(sum_vec, z);
+  }
+
+  /* Find the partial dot-product for the remaining elements after
+   * dealing with all 256-bit blocks. */
+  double final = 0.0;
+  for(int ii = N-N%4; ii < N; ++ii)
+    final += a[ii] * b[ii];
+
+  return reduce_vector2(sum_vec) + final;
+}
+
+static void kernel_avx2(benchmark::State& state) {
+  using namespace std::placeholders;
+  const int x = 2048;
+  auto my_kernel = easy::jit(dot_product, _1, _2, x, easy::options::dump_ir("xxx.ll"),
+    easy::options::opt_level(3, 0));
+  __attribute__ ((aligned (32))) double a[x], b[x];
+  for(int ii = 0; ii < x; ++ii)
+    a[ii] = b[ii] = ii/sqrt(x);
+  auto r = my_kernel(a, b);
+  printf("result = %lf, org = %lf\n", r, dot_product(a, b, x));
+}
+BENCHMARK(kernel_avx2);
 
 void __attribute__((noinline)) kernel(int n, int m, int * image, int const * mask, int* out) {
   for(int i = 0; i < n - m; ++i)
@@ -91,7 +151,7 @@ static void BM_convolve_compile_jit(benchmark::State& state) {
   }
 }
 BENCHMARK(BM_convolve_compile_jit);
-
+/*
 static void BM_convolve_cache_hit_jit(benchmark::State& state) {
   using namespace std::placeholders;
   static easy::Cache<> cache;
@@ -149,5 +209,5 @@ static void BM_qsort_cache_hit_jit(benchmark::State& state) {
   }
 }
 BENCHMARK(BM_qsort_cache_hit_jit);
-
+*/
 BENCHMARK_MAIN();
