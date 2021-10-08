@@ -14,6 +14,7 @@ class InitNativeTarget {
     LLVMInitializeX86Target();
     LLVMInitializeX86TargetInfo();
     LLVMInitializeX86TargetMC();
+    LLVMInitializeX86AsmParser();
     LLVMInitializeX86AsmPrinter();
 #elif defined(_AARCH64)
     LLVMInitializeAArch64Target();

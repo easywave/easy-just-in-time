@@ -16,6 +16,16 @@
 #include <llvm/Analysis/TargetTransformInfo.h> 
 #include <llvm/Analysis/TargetLibraryInfo.h> 
 #include <llvm/Support/FileSystem.h>
+#include <llvm/CodeGen/TargetPassConfig.h>
+#include <llvm/CodeGen/MachineRegisterInfo.h>
+#include <llvm/CodeGen/TargetSubtargetInfo.h>
+#include <dlfcn.h>
+#include <errno.h>
+#include <sys/mman.h>
+#include <unistd.h>
+
+#define handle_error(msg) \
+    do { perror(msg); exit(EXIT_FAILURE); } while (0)
 
 #ifdef NDEBUG
 #include <llvm/IR/Verifier.h>
@@ -23,7 +33,30 @@
 
 
 using namespace easy;
+char ReserveReg::ID = 0;
 
+static llvm::RegisterPass<ReserveReg> x("RegisterPass", "RegisterPass", false, false);
+static void registerHelloMFPass(const llvm::PassManagerBuilder &,
+                        llvm::legacy::PassManagerBase &PM) {
+  PM.add(new ReserveReg());
+}
+
+static llvm::RegisterStandardPasses
+  z(llvm::PassManagerBuilder::EP_EarlyAsPossible, 
+                 registerHelloMFPass);
+
+bool ReserveReg::runOnMachineFunction(llvm::MachineFunction& Fn) {
+  llvm::MachineRegisterInfo& reg_info = Fn.getRegInfo();
+  const llvm::TargetMachine & target_machine = Fn.getTarget();
+
+  auto TRI = Fn.getSubtarget().getRegisterInfo();
+  llvm::BitVector ReservedRegs = TRI->getReservedRegs(Fn);
+  reg_info.getReservedRegs();
+
+
+    llvm::errs() << "I saw a function called " << Fn.getName() << "!\n";
+    return false;
+}
 namespace easy {
   DefineEasyException(ExecutionEngineCreateError, "Failed to create execution engine for:");
   DefineEasyException(CouldNotOpenFile, "Failed to file to dump intermediate representation.");
@@ -36,6 +69,75 @@ Function::Function(void* Addr, std::unique_ptr<LLVMHolder> H)
 static std::unique_ptr<llvm::TargetMachine> GetHostTargetMachine() {
   std::unique_ptr<llvm::TargetMachine> TM(llvm::EngineBuilder().selectTarget());
   return TM;
+}
+
+struct FakeTargetPassConfig : public llvm::TargetPassConfig
+{
+  using llvm::TargetPassConfig::addPass;
+  virtual void addPreRegAlloc() { }
+  FakeTargetPassConfig(llvm::LLVMTargetMachine &TM, llvm::PassManagerBase &pm) :
+    llvm::TargetPassConfig(TM, pm) {}
+};
+union addPassType {
+  void(*addr)(void*, void*, bool, bool);
+  void(FakeTargetPassConfig::*func)(llvm::Pass*, bool, bool);
+};
+addPassType g_addPass;
+union addPreRegType {
+  int64_t addr;
+  void(FakeTargetPassConfig::*func)();
+  void (*generic_func)(void*);
+};
+addPreRegType g_org;
+void new_addPreRegAlloc(void* pThis)
+{
+  g_org.generic_func(pThis);
+  g_addPass.addr(pThis, new ReserveReg(), true, true);
+}
+
+union getReservedRegsType {
+  int64_t addr;
+  llvm::BitVector(llvm::TargetRegisterInfo::*func)(const llvm::MachineFunction &MF) const;
+  llvm::BitVector (*generic_func)(void*, const llvm::MachineFunction &MF);
+};
+static getReservedRegsType g_org_getReservedRegsType;
+
+// change the reserved the register list
+llvm::BitVector Hooked_getReservedRegsType(void* pThis, const llvm::MachineFunction &MF) {
+  const auto& name = MF.getName();
+  auto bit = g_org_getReservedRegsType.generic_func(pThis, MF);
+  bit.set(173); // ymm14
+  bit.set(174);
+  llvm::TargetRegisterInfo* p = (llvm::TargetRegisterInfo*)pThis;
+  for (int i = 0; i < p->getNumRegs(); i++)
+  {
+    printf("%d %s\n", i, p->getName(i));
+  }
+  
+  return bit;
+}
+
+static void Hook_getReservedRegs(llvm::Module& M, llvm::LLVMTargetMachine* llvmTM, const char* Name) {
+  if (!g_org_getReservedRegsType.addr) {
+    auto func = M.getFunction(Name);
+    auto TRI = llvmTM->getSubtargetImpl(*func)->getRegisterInfo();
+    auto getReservedRegs_addr = &llvm::TargetRegisterInfo::getReservedRegs;
+    getReservedRegsType dumy_getReservedRegs;
+    dumy_getReservedRegs.func = getReservedRegs_addr;
+    
+    // for virtual function the layout: https://blog.mozilla.org/nfroyd/2014/02/20/finding-addresses-of-virtual-functions/
+    int idxInVtable = (dumy_getReservedRegs.addr - 1) / sizeof(void*);
+    auto vtbl = (int64_t*)(*((int64_t*)TRI));
+    const auto PAGE_SIZE = (uint64_t)sysconf(_SC_PAGESIZE);
+    auto aliged_addr = (void*)((uint64_t)vtbl & ~(PAGE_SIZE - 1));
+    if (mprotect(aliged_addr, PAGE_SIZE, PROT_READ|PROT_WRITE) == -1)
+      handle_error("mprotect");
+
+    g_org_getReservedRegsType.addr = vtbl[idxInVtable];
+    getReservedRegsType hooked;
+    hooked.generic_func = Hooked_getReservedRegsType;
+    vtbl[idxInVtable] = hooked.addr;
+  }
 }
 
 static void Optimize(llvm::Module& M, const char* Name, const easy::Context& C, unsigned OptLevel, unsigned OptSize) {
@@ -58,6 +160,39 @@ static void Optimize(llvm::Module& M, const char* Name, const easy::Context& C, 
   MPM.add(easy::createInlineParametersPass(Name));
   Builder.populateModulePassManager(MPM);
   MPM.add(easy::createDevirtualizeConstantPass(Name));
+
+  llvm::LLVMTargetMachine* llvmTM = static_cast<llvm::LLVMTargetMachine*>(TM.get());
+
+  // the following trick was affected by https://github.com/jmpews/NoteZ/issues/47
+  // hook TargetRegisterInfo::getReservedRegs
+  Hook_getReservedRegs(M, llvmTM, Name);
+
+#if 0
+  // remain for reference
+  // get TargetPassConfig::addPass address
+  //https://stackoverflow.com/questions/3053561/how-do-i-assign-an-alias-to-a-function-name-in-c
+  auto addPass_addr = static_cast<void(FakeTargetPassConfig::*)(llvm::Pass*, bool, bool)>(&FakeTargetPassConfig::addPass);
+  g_addPass.func = addPass_addr;
+
+  // hook X86TargetConfig::addPreRegAlloc
+  auto config = llvmTM->createPassConfig(MPM);
+  FakeTargetPassConfig fake_config(*llvmTM, MPM);
+  auto vtbl = (int64_t*)(*((int64_t*)&fake_config));
+  auto addPreRegAlloc_addr = static_cast<void(FakeTargetPassConfig::*)()>(&FakeTargetPassConfig::addPreRegAlloc);
+  addPreRegType dummy_addPreReg;
+  dummy_addPreReg.func = addPreRegAlloc_addr;
+  // for virtual function the layout: https://blog.mozilla.org/nfroyd/2014/02/20/finding-addresses-of-virtual-functions/
+  int idxInVtable = (dummy_addPreReg.addr - 1) / sizeof(void*);
+  auto vtbl_x86 = (int64_t*)(*((int64_t*)config));
+  const auto PAGE_SIZE = (uint64_t)sysconf(_SC_PAGESIZE);
+  auto aliged_addr = (void*)((uint64_t)vtbl_x86 & ~(PAGE_SIZE - 1));
+  if (mprotect(aliged_addr, PAGE_SIZE, PROT_READ|PROT_WRITE) == -1)
+    handle_error("mprotect");
+  g_org.addr = vtbl_x86[idxInVtable];
+  addPreRegType hooked;
+  hooked.generic_func = new_addPreRegAlloc;
+  vtbl_x86[idxInVtable] = hooked.addr;
+#endif
 
 #ifdef NDEBUG
   MPM.add(llvm::createVerifierPass());

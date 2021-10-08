@@ -4,6 +4,7 @@
 #include<llvm/Pass.h>
 #include<llvm/ADT/StringRef.h>
 #include<easy/runtime/Context.h>
+#include<llvm/CodeGen/MachineFunctionPass.h>
 
 namespace easy {
   struct ContextAnalysis :
@@ -60,6 +61,23 @@ namespace easy {
     }
 
     bool runOnFunction(llvm::Function &F) override;
+
+    private:
+    llvm::StringRef TargetName_;
+  };
+
+  #define X86_MACHINEINSTR_PRINTER_PASS_NAME "Dummy X86 machineinstr printer pass"
+
+  struct ReserveReg : 
+    public llvm::MachineFunctionPass
+  {
+    static char ID;
+
+    ReserveReg()
+      : llvm::MachineFunctionPass(ID) {}
+    bool runOnMachineFunction(llvm::MachineFunction &MF) override;
+
+    llvm::StringRef getPassName() const override { return X86_MACHINEINSTR_PRINTER_PASS_NAME; }
 
     private:
     llvm::StringRef TargetName_;

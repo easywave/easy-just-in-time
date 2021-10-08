@@ -8,6 +8,87 @@
 #include <immintrin.h>
 #include <math.h>
 
+using namespace std::placeholders;
+
+static void foo(void* dat) {
+  (*(int*)dat) += 1;
+}
+
+static EASY_JIT_EXPOSE void foo2(void* dat) {
+  (*(int*)dat) += 2;
+}
+using f_type = void(void*);
+struct funcs{
+  f_type *f;//[10];
+  int size;
+};
+/*
+static void map (void* data, unsigned nmemb, unsigned size, const funcs* func) {//void (*f)(void*)) {
+  for(unsigned i = 0; i < nmemb; ++i)
+    //for(int j = 0; j < func->size; ++j)
+      (*func->f)((char*)data + i * size);
+}
+static void map (void* data, unsigned nmemb, unsigned size, void (*f)(void*)) {
+  for(unsigned i = 0; i < nmemb; ++i)
+    //for(int j = 0; j < func->size; ++j)
+      f((char*)data + i * size);
+}*/
+static void map (void* data, unsigned nmemb, unsigned size, void(*f)(void*)) {
+  for(unsigned i = 0; i < nmemb; ++i)
+    //for(int j = 0; j < func->size; ++j)
+      f((char*)data + i * size);
+}
+void test_func(benchmark::State& state) 
+{
+  // funcs func = {
+  //   foo, //{foo, foo2},
+  //   2};
+  // easy::FunctionWrapper<void(void*, unsigned, unsigned)> map_w = easy::jit(map, _1, _2, _3, foo, easy::options::dump_ir("testfunc.ll"));
+  auto foo_j = easy::jit(foo, _1);
+  auto map_w = easy::jit(map, _1, _2, _3, foo_j, easy::options::dump_ir("testfunc.ll"));
+
+  int data[] = {1,2,3,4};
+  map_w(data, sizeof(data)/sizeof(data[0]), sizeof(data[0]));
+
+  // CHECK: data[0] is 2
+  // CHECK: data[1] is 3
+  // CHECK: data[2] is 4
+  // CHECK: data[3] is 5
+  for(int v = 0; v != 4; ++v)
+    printf("data[%d] is %d\n", v, data[v]);
+
+}
+//BENCHMARK(test_func);
+
+static void loop1(int* data, int size)
+{
+  for (int i = 0; i < size; i++)
+  {
+    data[i] += 3;
+  }
+}
+static void loop2(int* data, int size, void(*func)(int*,int))
+{
+  for (int i = 0; i < size; i++)
+  {
+    data[i] += 6;
+  }
+  func(data, size);
+}
+void test_func_same_loop(benchmark::State& state) 
+{
+  float pf[8] = {0};
+    __m256 m;
+    //__asm__("vmovups %1, %0" : "=x" (m) : "m" (*pf));
+    __asm__("vmovups %0, %%ymm1" : /*"=x" (m)*/ : "m" (*pf) : "ymm1");
+    __asm__(".byte 0x90" : : "x" (*pf) : "ymm0");
+    __asm__(".byte 0x90" : : "x" (*pf) : "ymm2");
+  auto foo_1 = easy::jit(loop1, _1, _2);
+  auto foo_2 = easy::jit(loop2, _1, _2, foo_1, easy::options::dump_ir("loop1.ll"));
+  int data[10000];
+  foo_2(data, 10000);
+}
+//BENCHMARK(test_func_same_loop);
 /* Horizontal add works within 128-bit lanes. Use scalar ops to add
  * across the boundary. */
 static double reduce_vector1(__m256d input) {
@@ -36,6 +117,11 @@ double __attribute__((noinline)) dot_product(const double *a, const double *b, i
   for(int ii = 0; ii < N/4; ++ii) {
     
     __m256d x = _mm256_load_pd(a+4*ii);
+    __asm__ __volatile__ (".byte 0x90;.byte 0x90" : : : 
+                              "ymm0", "ymm1", "ymm2", "ymm3", "ymm4", "ymm5",
+                              "ymm6", "ymm7", "ymm8", "ymm9", "ymm10", "ymm11",
+                              "ymm12", "ymm13"
+                          );
     //x = _mm256_i32gather_pd(a, index, 1);
     __m256d y = _mm256_load_pd(b+4*ii);
     __m256d z = _mm256_mul_pd(x,y);
@@ -50,6 +136,17 @@ double __attribute__((noinline)) dot_product(const double *a, const double *b, i
 
   return reduce_vector2(sum_vec) + final;
 }
+
+// https://stackoverflow.com/questions/28787799/insert-inline-assembly-expressions-using-llvm-pass
+/*
+  llvm::InlineAsm *IA =
+    llvm::InlineAsm::get(FTy, AsmString, Constraints, HasSideEffect,
+                         false, // IsAlignStack
+                         AsmDialect);
+  llvm::CallInst *Result = Builder.CreateCall(IA, Args);
+  Result->addAttribute(llvm::AttributeSet::FunctionIndex,
+                       llvm::Attribute::NoUnwind);
+*/
 
 static void kernel_avx2(benchmark::State& state) {
   using namespace std::placeholders;

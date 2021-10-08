@@ -5,6 +5,7 @@
 #include <llvm/IR/Constant.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/InlineAsm.h>
 #include <llvm/Linker/Linker.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/SmallSet.h>
@@ -186,6 +187,14 @@ Function* CreateWrapperFun(Module &M, Function &F, HighLevelLayout &HLL, easy::C
 
   BasicBlock* BB = BasicBlock::Create(CC, "", Wrapper);
   IRBuilder<> B(BB);
+
+  ////////////////////////////
+  SmallVector<Type*, 8> AsmArgTypes;
+  llvm::FunctionType *AsmFTy = llvm::FunctionType::get(Type::getVoidTy(CC), AsmArgTypes, false);
+  llvm::InlineAsm *IA = llvm::InlineAsm::get(AsmFTy, ".byte 0x90;.byte 0x90;.byte 0x90;.byte 0x90", "~{ymm0},~{ymm1}",
+         true, /* IsAlignStack */ false, llvm::InlineAsm::AD_ATT);
+  B.CreateCall(IA);
+  ////////////////////////////
 
   SmallVector<Value*, 8> Args;
   GetInlineArgs(C, F, HLL, *Wrapper, NewHLL, Args, B);
