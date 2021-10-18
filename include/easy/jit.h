@@ -69,6 +69,24 @@ easy::Context get_context_for(Args&& ... args) {
                                                   std::forward<Args>(args)...);
   return C;
 }
+
+template<class T, class ... Args>
+easy::Context get_context_for_(const RawBytes& rawBytes, Args&& ... args) {
+  using FunOriginalTy = std::remove_pointer_t<std::decay_t<T>>;
+  static_assert(std::is_function<FunOriginalTy>::value,
+                "easy::jit: supports only on functions and function pointers");
+
+  using parameter_list = typename meta::function_traits<FunOriginalTy>::parameter_list;
+
+  static_assert(parameter_list::size <= sizeof...(Args),
+                "easy::jit: not providing enough argument to actual call");
+
+  easy::Context C;
+  C.setRawBytes(rawBytes);
+  easy::set_parameters<parameter_list, Args&&...>(parameter_list(), C,
+                                                  std::forward<Args>(args)...);
+  return C;
+}
 }
 
 template<class T, class ... Args>
@@ -78,6 +96,39 @@ EASY_JIT_COMPILER_INTERFACE jit(T &&Fun, Args&& ... args) {
   return jit_with_context<T, Args...>(C, std::forward<T>(Fun));
 }
 
+template<class T, class ... Args>
+FuncType<T, Args...>
+EASY_JIT_COMPILER_INTERFACE jit_(const RawBytes& rawBytes, T &&Fun, Args&& ... args) {
+  auto C = get_context_for_<T, Args...>(rawBytes, std::forward<Args>(args)...);
+  return jit_with_context<T, Args...>(C, std::forward<T>(Fun));
 }
 
+// https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html
+// https://stackoverflow.com/questions/52014436/using-a-specific-zmm-register-in-inline-asm
+// https://blog.csdn.net/lwx62/article/details/82796364
+// output_var: store the result to 'output_var'(offen c++ variable)
+// output_reg: the result source in which register
+// __m512 xxx() {
+//     __m512 x;
+//     EMIT_STUB_FULL(x, "zmm13", "zmm14");
+//     return x;
+// }
+#define EMIT_STUB_FULL(input_var, input_reg, ...) \
+  {register decltype(input_var) __input_var__ asm(input_reg) = input_var; \
+  __asm__ __volatile__(\
+        ".byte 0x90\n\t"                :   \
+        "=v" (__input_var__)            : /* outputs */\
+        "0" (__input_var__)             : /* inputs */ \
+        __VA_ARGS__);                     /* modify */\
+  input_var = __input_var__;}
+
+#define EMIT_STUB_NOMODIFY(input_var, input_reg) \
+  {register decltype(input_var) __input_var__ asm(input_reg) = input_var; \
+  __asm__ __volatile__(\
+        ".byte 0x90\n\t"                :   \
+        "=v" (__input_var__)            : /* outputs */\
+        "0" (__input_var__));             /* inputs */ \
+  input_var = __input_var__;}
+
+}
 #endif

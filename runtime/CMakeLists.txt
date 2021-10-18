@@ -8,6 +8,7 @@ add_library(EasyJitRuntime SHARED
   pass/DevirtualizeConstant.cpp
   pass/InlineParameters.cpp
   pass/InlineParametersHelper.cpp
+  pass/EmitCodes.cpp
 )
 
 llvm_config(EasyJitRuntime core codegen interpreter support mcjit native executionengine passes objcarcopts)

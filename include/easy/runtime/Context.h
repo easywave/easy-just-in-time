@@ -117,6 +117,11 @@ class StructArgument
   }
 };
 
+struct RawBytes {
+  std::vector<uint8_t> bytes;
+  std::vector<std::string> reserved_regs;
+};
+
 // class that holds information about the just-in-time context
 class Context {
 
@@ -134,6 +139,8 @@ class Context {
     ArgumentMapping_.emplace_back(new ArgTy(std::forward<Args>(args)...));
     return *this;
   }
+
+  RawBytes RawBytes_;
 
   public:
 
@@ -169,6 +176,11 @@ class Context {
     return *this;
   }
 
+  Context& setRawBytes(const RawBytes& raw) {
+    RawBytes_ = raw;
+    return *this;
+  }
+
   Context& setDebugFile(std::string const &File) {
     DebugFile_ = File;
     return *this;
@@ -176,6 +188,10 @@ class Context {
 
   std::pair<unsigned, unsigned> getOptLevel() const {
     return std::make_pair(OptLevel_, OptSize_);
+  }
+
+  const RawBytes& getRawBytes() const {
+    return RawBytes_;
   }
 
   std::string const& getDebugFile() const {

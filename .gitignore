@@ -10,3 +10,4 @@
 */.ninja_log
 */__pycache__
 *.py[cod]
+_*

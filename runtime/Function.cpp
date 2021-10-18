@@ -23,6 +23,8 @@
 #include <errno.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <thread>
+#include <algorithm>
 
 #define handle_error(msg) \
     do { perror(msg); exit(EXIT_FAILURE); } while (0)
@@ -53,9 +55,8 @@ bool ReserveReg::runOnMachineFunction(llvm::MachineFunction& Fn) {
   llvm::BitVector ReservedRegs = TRI->getReservedRegs(Fn);
   reg_info.getReservedRegs();
 
-
-    llvm::errs() << "I saw a function called " << Fn.getName() << "!\n";
-    return false;
+  llvm::errs() << "I saw a function called " << Fn.getName() << "!\n";
+  return false;
 }
 namespace easy {
   DefineEasyException(ExecutionEngineCreateError, "Failed to create execution engine for:");
@@ -101,17 +102,33 @@ union getReservedRegsType {
   llvm::BitVector (*generic_func)(void*, const llvm::MachineFunction &MF);
 };
 static getReservedRegsType g_org_getReservedRegsType;
+thread_local const std::vector<std::string>* g_reservedRegs;
+// TODO: add lock
+static std::map<std::string, unsigned int> g_regNameToIdx;
 
+std::string to_upper(const std::string s) {
+  std::string result = s;
+  std::transform(s.begin(), s.end(), result.begin(), ::toupper);
+  return result;
+}
 // change the reserved the register list
 llvm::BitVector Hooked_getReservedRegsType(void* pThis, const llvm::MachineFunction &MF) {
+  if (g_regNameToIdx.empty()) {
+    llvm::TargetRegisterInfo* p = (llvm::TargetRegisterInfo*)pThis;
+    for (unsigned int i = 0; i < p->getNumRegs(); i++)
+    {
+      auto reg = to_upper(std::string(p->getName(i)));
+      //printf("%d %s\n", i, reg.c_str());
+      g_regNameToIdx[reg] = i;
+    }
+  }
+  
   const auto& name = MF.getName();
   auto bit = g_org_getReservedRegsType.generic_func(pThis, MF);
-  bit.set(173); // ymm14
-  bit.set(174);
-  llvm::TargetRegisterInfo* p = (llvm::TargetRegisterInfo*)pThis;
-  for (int i = 0; i < p->getNumRegs(); i++)
-  {
-    printf("%d %s\n", i, p->getName(i));
+  for (int i = 0; i < g_reservedRegs->size(); i++) {
+    auto reg = to_upper((*g_reservedRegs)[i]);
+    auto idx = g_regNameToIdx[reg];
+    bit.set(idx);
   }
   
   return bit;
@@ -157,6 +174,7 @@ static void Optimize(llvm::Module& M, const char* Name, const easy::Context& C, 
   llvm::legacy::PassManager MPM;
   MPM.add(llvm::createTargetTransformInfoWrapperPass(TM->getTargetIRAnalysis()));
   MPM.add(easy::createContextAnalysisPass(C));
+  MPM.add(easy::createEmitCodesPass(Name));
   MPM.add(easy::createInlineParametersPass(Name));
   Builder.populateModulePassManager(MPM);
   MPM.add(easy::createDevirtualizeConstantPass(Name));
@@ -280,7 +298,10 @@ std::unique_ptr<Function> Function::Compile(void *Addr, easy::Context const& C) 
 
   WriteOptimizedToFile(*M, C.getDebugFile());
 
-  return CompileAndWrap(Name, Globals, std::move(Ctx), std::move(M));
+  const auto& raw = C.getRawBytes();
+  g_reservedRegs = &raw.reserved_regs;
+  auto f = CompileAndWrap(Name, Globals, std::move(Ctx), std::move(M));
+  return f;
 }
 
 void easy::Function::serialize(std::ostream& os) const {

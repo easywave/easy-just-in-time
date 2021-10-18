@@ -66,6 +66,26 @@ namespace easy {
     llvm::StringRef TargetName_;
   };
 
+  struct EmitCodes :
+      public llvm::FunctionPass {
+
+    static char ID;
+
+    EmitCodes()
+      : llvm::FunctionPass(ID) {}
+    EmitCodes(llvm::StringRef TargetName)
+      : llvm::FunctionPass(ID), TargetName_(TargetName) {}
+
+    void getAnalysisUsage(llvm::AnalysisUsage &AU) const override {
+      AU.addRequired<ContextAnalysis>();
+    }
+
+    bool runOnFunction(llvm::Function &F) override;
+
+    private:
+    llvm::StringRef TargetName_;
+  };
+
   #define X86_MACHINEINSTR_PRINTER_PASS_NAME "Dummy X86 machineinstr printer pass"
 
   struct ReserveReg : 
@@ -78,7 +98,10 @@ namespace easy {
     bool runOnMachineFunction(llvm::MachineFunction &MF) override;
 
     llvm::StringRef getPassName() const override { return X86_MACHINEINSTR_PRINTER_PASS_NAME; }
-
+    void getAnalysisUsage(llvm::AnalysisUsage &AU) const override {
+      AU.addRequired<ContextAnalysis>();
+      MachineFunctionPass::getAnalysisUsage(AU);
+    }
     private:
     llvm::StringRef TargetName_;
   };
@@ -86,6 +109,7 @@ namespace easy {
   llvm::Pass* createContextAnalysisPass(easy::Context const &C);
   llvm::Pass* createInlineParametersPass(llvm::StringRef Name);
   llvm::Pass* createDevirtualizeConstantPass(llvm::StringRef Name);
+  llvm::Pass* createEmitCodesPass(llvm::StringRef Name);
 }
 
 #endif

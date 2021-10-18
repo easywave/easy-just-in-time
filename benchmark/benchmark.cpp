@@ -44,8 +44,8 @@ void test_func(benchmark::State& state)
   //   foo, //{foo, foo2},
   //   2};
   // easy::FunctionWrapper<void(void*, unsigned, unsigned)> map_w = easy::jit(map, _1, _2, _3, foo, easy::options::dump_ir("testfunc.ll"));
-  auto foo_j = easy::jit(foo, _1);
-  auto map_w = easy::jit(map, _1, _2, _3, foo_j, easy::options::dump_ir("testfunc.ll"));
+  auto foo_j = std::move(easy::jit(foo, _1));
+  auto map_w = std::move(easy::jit(map, _1, _2, _3, foo_j, easy::options::dump_ir("testfunc.ll")));
 
   int data[] = {1,2,3,4};
   map_w(data, sizeof(data)/sizeof(data[0]), sizeof(data[0]));
@@ -117,11 +117,7 @@ double __attribute__((noinline)) dot_product(const double *a, const double *b, i
   for(int ii = 0; ii < N/4; ++ii) {
     
     __m256d x = _mm256_load_pd(a+4*ii);
-    __asm__ __volatile__ (".byte 0x90;.byte 0x90" : : : 
-                              "ymm0", "ymm1", "ymm2", "ymm3", "ymm4", "ymm5",
-                              "ymm6", "ymm7", "ymm8", "ymm9", "ymm10", "ymm11",
-                              "ymm12", "ymm13"
-                          );
+    EMIT_STUB_FULL(x, "ymm15", "ymm14", "ymm13");
     //x = _mm256_i32gather_pd(a, index, 1);
     __m256d y = _mm256_load_pd(b+4*ii);
     __m256d z = _mm256_mul_pd(x,y);
@@ -137,21 +133,14 @@ double __attribute__((noinline)) dot_product(const double *a, const double *b, i
   return reduce_vector2(sum_vec) + final;
 }
 
-// https://stackoverflow.com/questions/28787799/insert-inline-assembly-expressions-using-llvm-pass
-/*
-  llvm::InlineAsm *IA =
-    llvm::InlineAsm::get(FTy, AsmString, Constraints, HasSideEffect,
-                         false, // IsAlignStack
-                         AsmDialect);
-  llvm::CallInst *Result = Builder.CreateCall(IA, Args);
-  Result->addAttribute(llvm::AttributeSet::FunctionIndex,
-                       llvm::Attribute::NoUnwind);
-*/
-
+easy::FunctionWrapper<double(const double *a, const double *b)> my_kernel(nullptr);
 static void kernel_avx2(benchmark::State& state) {
   using namespace std::placeholders;
   const int x = 2048;
-  auto my_kernel = easy::jit(dot_product, _1, _2, x, easy::options::dump_ir("xxx.ll"),
+  easy::RawBytes raw;
+  raw.bytes = {0x90, 0x90, 0x90};
+  raw.reserved_regs = {"ymm1", "xmm1", "ebx", "rax"};
+  my_kernel = easy::jit_(raw, dot_product, _1, _2, x, easy::options::dump_ir("xxx.ll"),
     easy::options::opt_level(3, 0));
   __attribute__ ((aligned (32))) double a[x], b[x];
   for(int ii = 0; ii < x; ++ii)

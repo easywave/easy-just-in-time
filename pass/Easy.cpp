@@ -134,7 +134,7 @@ namespace easy {
       //   not only the target function, but also its parameters
       deduceObjectsToJIT(M);
       regexFunctionsToJIT(M);
-      deduceVirtualMethodsToJIT(M);
+      //deduceVirtualMethodsToJIT(M);
 
       // get functions in section jit section
       for(GlobalObject &GO : M.global_objects()) {
@@ -401,6 +401,8 @@ namespace easy {
           GVar->setVisibility(GlobalValue::DefaultVisibility);
           GVar->setLinkage(GlobalValue::ExternalLinkage);
         } else if(auto* F = dyn_cast<Function>(&GV)) {
+          if (F->hasFnAttribute(Attribute::OptimizeNone))
+            continue;
           // f becomes private
           F->removeFnAttr(Attribute::NoInline);
           if(F == &Entry)

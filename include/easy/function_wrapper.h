@@ -33,6 +33,10 @@ class FunctionWrapperBase {
     return *Fun_;
   }
 
+  bool isValid() const {
+    return Fun_.get();
+  }
+
   void* getRawPointer() const {
     return getFunction().getRawPointer();
   }
