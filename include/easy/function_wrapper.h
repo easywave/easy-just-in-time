@@ -6,6 +6,10 @@
 #include <easy/runtime/Function.h>
 #include <easy/meta.h>
 
+#ifdef __GNUC__
+#define __cdecl
+#endif
+
 namespace easy {
 
 class FunctionWrapperBase {

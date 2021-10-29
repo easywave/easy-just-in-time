@@ -19,6 +19,8 @@
 #include <llvm/CodeGen/TargetPassConfig.h>
 #include <llvm/CodeGen/MachineRegisterInfo.h>
 #include <llvm/CodeGen/TargetSubtargetInfo.h>
+#include <llvm/Linker/Linker.h>
+#include <llvm/IR/InstIterator.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <sys/mman.h>
@@ -274,6 +276,49 @@ CompileAndWrap(const char*Name, GlobalMapping* Globals,
   return std::unique_ptr<Function>(new Function(Address, std::move(Holder)));
 }
 
+static void LinkPointerIfPossible(llvm::Module &M, const std::string &Name) {
+  auto &BT = easy::BitcodeTracker::GetTracker();
+  auto Ptr = BT.getAddress(Name);
+  if(Ptr) {
+    std::unique_ptr<llvm::Module> LM = BT.getModuleWithContext(Ptr, M.getContext());
+
+    if(!llvm::Linker::linkModules(M, std::move(LM), llvm::Linker::OverrideFromSrc,
+                            [](llvm::Module &, const llvm::StringSet<> &){}))
+    {
+      llvm::GlobalValue *GV = M.getNamedValue(Name);
+      if(auto* G = llvm::dyn_cast<llvm::GlobalVariable>(GV)) {
+        GV->setLinkage(llvm::Function::PrivateLinkage);
+      }
+      else if(llvm::Function* F = llvm::dyn_cast<llvm::Function>(GV)) {
+        F->setLinkage(llvm::Function::PrivateLinkage);
+      }
+      //assert(false && "wtf");
+    }
+  }
+}
+
+static void ResolveModule(llvm::Module& M, const llvm::StringRef& Name) {
+  auto& F = *M.getFunction(Name);
+  std::vector<std::string> ToDo;
+  for(auto it = llvm::inst_begin(F); it != inst_end(F); ++it) {
+    llvm::CallSite CS{&*it};
+    if(!CS)
+      continue;
+
+    llvm::Function* Called = CS.getCalledFunction();
+    if (Called == nullptr)
+      continue;
+    auto CalledName = Called->getName();
+    if (CalledName.empty())
+      continue;
+    ToDo.push_back(CalledName);
+    //LinkPointerIfPossible(M, CalledName);
+  }
+  for (auto &&N : ToDo) {
+    LinkPointerIfPossible(M, N);
+  }
+}
+
 llvm::Module const& Function::getLLVMModule() const {
   return *static_cast<LLVMHolderImpl const&>(*this->Holder).M_;
 }
@@ -289,6 +334,8 @@ std::unique_ptr<Function> Function::Compile(void *Addr, easy::Context const& C) 
   std::unique_ptr<llvm::Module> M;
   std::unique_ptr<llvm::LLVMContext> Ctx;
   std::tie(M, Ctx) = BT.getModule(Addr);
+
+  ResolveModule(*M, Name);
 
   unsigned OptLevel;
   unsigned OptSize;

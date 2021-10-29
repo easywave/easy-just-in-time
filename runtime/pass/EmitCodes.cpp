@@ -58,6 +58,8 @@ bool easy::EmitCodes::runOnFunction(llvm::Function &F) {
     //}
     changed = true;
     const InlineAsm *IA = cast<InlineAsm>(Called);
+    if (IA->getAsmString() != ".byte 0x90\n\t")
+      continue;
     InlineAsm *newIA = InlineAsm::get(
       IA->getFunctionType(),
       s,
