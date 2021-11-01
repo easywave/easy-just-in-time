@@ -65,7 +65,8 @@ FunctionType* GetWrapperTy(HighLevelLayout &HLL) {
   return FunctionType::get(HLL.Return_, Args, false);
 }
 
-void GetInlineArgs(easy::Context const &C,
+void GetInlineArgs(Module &M, 
+                   easy::Context const &C,
                    Function& F, HighLevelLayout &FHLL,
                    Function &Wrapper, HighLevelLayout &WrapperHLL,
                    SmallVectorImpl<Value*> &Args, IRBuilder<> &B) {
@@ -108,7 +109,7 @@ void GetInlineArgs(easy::Context const &C,
 
         if(ArgInF.StructByPointer_) {
           // struct is passed trough a pointer
-          AllocaInst* ParamAlloc = easy::GetStructAlloc(B, DL, *Struct, ArgInF.Types_[0]);
+          AllocaInst* ParamAlloc = easy::GetStructAlloc(M, B, DL, *Struct, ArgInF.Types_[0]);
           Args.push_back(ParamAlloc);
         } else {
           // struct is passed by value (may be many values)
@@ -189,7 +190,7 @@ Function* CreateWrapperFun(Module &M, Function &F, HighLevelLayout &HLL, easy::C
   IRBuilder<> B(BB);
 
   SmallVector<Value*, 8> Args;
-  GetInlineArgs(C, F, HLL, *Wrapper, NewHLL, Args, B);
+  GetInlineArgs(M, C, F, HLL, *Wrapper, NewHLL, Args, B);
 
   Value* Call = B.CreateCall(&F, Args);
 

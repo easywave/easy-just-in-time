@@ -21,6 +21,7 @@
 #include <llvm/CodeGen/TargetSubtargetInfo.h>
 #include <llvm/Linker/Linker.h>
 #include <llvm/IR/InstIterator.h>
+#include <llvm/Transforms/Scalar.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <sys/mman.h>
@@ -179,7 +180,22 @@ static void Optimize(llvm::Module& M, const char* Name, const easy::Context& C, 
   MPM.add(easy::createEmitCodesPass(Name));
   MPM.add(easy::createInlineParametersPass(Name));
   Builder.populateModulePassManager(MPM);
-  MPM.add(easy::createDevirtualizeConstantPass(Name));
+  //MPM.add(easy::createDevirtualizeConstantPass(Name));
+  //MPM.add(llvm::createConstantPropagationPass());
+  //MPM.add(llvm::createSCCPPass());    // Unroll small loops
+  //MPM.add(llvm::createLoopUnrollPass());    // Unroll small loops
+  //MPM.add(llvm::createSimpleLoopUnrollPass());    // Unroll small loops
+
+  // LoopUnroll may generate some redundency to cleanup.
+  //MPM.add(llvm::createInstructionCombiningPass());
+  //MPM.add(llvm::createLoopInstSimplifyPass());
+
+  // Runtime unrolling will introduce runtime check in loop prologue. If the
+  // unrolled loop is a inner loop, then the prologue will be inside the
+  // outer loop. LICM pass can help to promote the runtime check out if the
+  // checked value is loop invariant.
+  //MPM.add(llvm::createLICMPass());
+  //MPM.add(easy::createIndirectcallConstantPass(Name));
 
   llvm::LLVMTargetMachine* llvmTM = static_cast<llvm::LLVMTargetMachine*>(TM.get());
 

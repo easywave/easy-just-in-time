@@ -106,10 +106,31 @@ namespace easy {
     llvm::StringRef TargetName_;
   };
 
+struct IndirectcallConstant :
+      public llvm::FunctionPass {
+
+    static char ID;
+
+    IndirectcallConstant()
+      : llvm::FunctionPass(ID) {}
+    IndirectcallConstant(llvm::StringRef TargetName)
+      : llvm::FunctionPass(ID), TargetName_(TargetName) {}
+
+    void getAnalysisUsage(llvm::AnalysisUsage &AU) const override {
+      AU.addRequired<ContextAnalysis>();
+    }
+
+    bool runOnFunction(llvm::Function &F) override;
+
+    private:
+    llvm::StringRef TargetName_;
+  };
+
   llvm::Pass* createContextAnalysisPass(easy::Context const &C);
   llvm::Pass* createInlineParametersPass(llvm::StringRef Name);
   llvm::Pass* createDevirtualizeConstantPass(llvm::StringRef Name);
   llvm::Pass* createEmitCodesPass(llvm::StringRef Name);
+  llvm::Pass* createIndirectcallConstantPass(llvm::StringRef Name);
 }
 
 #endif

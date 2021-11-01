@@ -142,7 +142,8 @@ std::pair<llvm::Constant*, size_t> easy::GetConstantFromRaw(llvm::DataLayout con
 }
 
 static
-size_t StoreStructField(llvm::IRBuilder<> &B,
+size_t StoreStructField(llvm::Module &M,
+                        llvm::IRBuilder<> &B,
                         llvm::DataLayout const &DL,
                         Type* Ty,
                         uint8_t const* Raw,
@@ -151,25 +152,51 @@ size_t StoreStructField(llvm::IRBuilder<> &B,
   StructType* STy = dyn_cast<StructType>(Ty);
   size_t RawOffset = 0;
   if(STy) {
-    errs() << "struct " << *STy << "\n";
-    size_t Fields = STy->getNumContainedTypes();
+    //errs() << "struct " << *STy << "\n";
+    size_t Fields = STy->getStructNumElements();
     for(size_t Field = 0; Field != Fields; ++Field) {
       GEP.push_back(B.getInt32(Field));
-      size_t Size = StoreStructField(B, DL, STy->getElementType(Field), Raw+RawOffset, Alloc, GEP);
+      size_t Size = StoreStructField(M, B, DL, STy->getElementType(Field), Raw+RawOffset, Alloc, GEP);
       RawOffset += Size;
       GEP.pop_back();
     }
   } else {
-    Constant* FieldValue;
-    std::tie(FieldValue, RawOffset) = easy::GetConstantFromRaw(DL, Ty, (uint8_t const*)Raw);
+    ArrayType *ATy = dyn_cast<ArrayType>(Ty);
+    if (ATy) {
+      //errs() << "array " << *ATy << "\n";
+      size_t Fields = ATy->getArrayNumElements();
+      for(size_t Field = 0; Field != Fields; ++Field) {
+        GEP.push_back(B.getInt32(Field));
+        size_t Size = StoreStructField(M, B, DL, ATy->getElementType(), Raw+RawOffset, Alloc, GEP);
+        RawOffset += Size;
+        GEP.pop_back();
+      }
+    } else {
+      if (Ty->isPointerTy()) {
+        auto PTy = Ty->getContainedType(0);
+        if (PTy->isFunctionTy()) {
+          void **p = (void**)Raw;
+          if (p && *p) {
+            easy::PtrArgument Ptr{*p};
+            auto c = LinkPointerIfPossible(M, Ptr, Ty);
 
-    Value* FieldPtr = B.CreateGEP(nullptr, Alloc, GEP, "field.gep");
-    B.CreateStore(FieldValue, FieldPtr);
+            Value* FieldPtr = B.CreateGEP(nullptr, Alloc, GEP, "field.gepptr");
+            B.CreateStore(c, FieldPtr);
+            return 8;
+          }
+        }
+      }
+      Constant* FieldValue;
+      std::tie(FieldValue, RawOffset) = easy::GetConstantFromRaw(DL, Ty, (uint8_t const*)Raw);
+      Value* FieldPtr = B.CreateGEP(nullptr, Alloc, GEP, "field.gep");
+      B.CreateStore(FieldValue, FieldPtr);
+    }
   }
   return RawOffset;
 }
 
-llvm::AllocaInst* easy::GetStructAlloc(llvm::IRBuilder<> &B,
+llvm::AllocaInst* easy::GetStructAlloc(llvm::Module &M,
+                                       llvm::IRBuilder<> &B,
                                        llvm::DataLayout const &DL,
                                        easy::StructArgument const &Struct,
                                        llvm::Type* StructPtrTy) {
@@ -181,7 +208,7 @@ llvm::AllocaInst* easy::GetStructAlloc(llvm::IRBuilder<> &B,
   // TODO: Data points to the data structure or holds the data structure itself ?
   // Check that size matches the .data()
 
-  size_t Size = StoreStructField(B, DL, StructTy, (uint8_t const*)Struct.get().data(), Alloc, GEP);
+  size_t Size = StoreStructField(M, B, DL, StructTy, (uint8_t const*)Struct.get().data(), Alloc, GEP);
 
   return Alloc;
 }
