@@ -149,21 +149,27 @@ static void kernel_avx2(benchmark::State& state) {
 }
 //BENCHMARK(kernel_avx2);
 
-using reduce_type =  double (*)(__m256d);
-using reduce_type2 =  __m256d (*)(__m256d, const float, const float);
 struct reduce_types_params {
   double x;
   double y;
+  double x1;
+  double x2;
+  double x3;
+  double x4;
+  double x5;
 };
+using reduce_type =  double (*)(__m256d);
+using reduce_type2 =  __m256d (*)(__m256d, const reduce_types_params);
+
 struct FuseParam {
-  reduce_type funcs[10];
+  reduce_type funcs[2];
   int funcs_num;
-  reduce_type2 funcs2[10];
+  reduce_type2 funcs2[1];
   int funcs_num2;
-  reduce_types_params funcs2_param[10];
+  reduce_types_params funcs2_param[1];
 };
-static __m256d EASY_JIT_EXPOSE add_x(__m256d input, const float x, const float y) {
-  const __m256d x_v = _mm256_set1_pd(x);
+static __m256d EASY_JIT_EXPOSE add_x(__m256d input, const reduce_types_params params) {
+  const __m256d x_v = _mm256_set1_pd(params.x);
   return _mm256_add_pd(input, x_v);
 }
 double __attribute__((noinline)) dot_product_pass_func(const double *a, const double *b, int N, const FuseParam param) 
@@ -183,7 +189,7 @@ double __attribute__((noinline)) dot_product_pass_func(const double *a, const do
     __m256d z = _mm256_mul_pd(x,y);
     sum_vec = _mm256_add_pd(sum_vec, z);
     for(int j = 0; j < param.funcs_num2; j++)
-      sum_vec = param.funcs2[j](sum_vec, param.funcs2_param[j].x, param.funcs2_param[j].y);
+      sum_vec = param.funcs2[j](sum_vec, param.funcs2_param[j]);
   }
 
   /* Find the partial dot-product for the remaining elements after

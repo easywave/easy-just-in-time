@@ -38,6 +38,8 @@ llvm::Constant* LinkPointerIfPossible(llvm::Module &M, easy::PtrArgument const &
 
 llvm::AllocaInst* GetStructAlloc(llvm::Module &M, llvm::IRBuilder<> &B, llvm::DataLayout const &DL, easy::StructArgument const &Struct, llvm::Type* StructPtrTy);
 
+llvm::GlobalVariable* GetGlobalStruct(llvm::Module &M, llvm::IRBuilder<> &B, llvm::DataLayout const &DL, easy::StructArgument const &Struct, llvm::Type* StructPtrTy);
+
 std::pair<llvm::Constant*, size_t> GetConstantFromRaw(llvm::DataLayout const& DL, llvm::Type* T, const uint8_t* Raw);
 
 }

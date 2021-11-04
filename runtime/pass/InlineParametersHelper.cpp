@@ -110,6 +110,7 @@ llvm::Constant* easy::LinkPointerIfPossible(llvm::Module &M, easy::PtrArgument c
       }
       else if(llvm::Function* F = dyn_cast<llvm::Function>(GV)) {
         F->setLinkage(llvm::Function::PrivateLinkage);
+        F->addFnAttr(llvm::Attribute::AlwaysInline);
         return F;
       }
       assert(false && "wtf");
@@ -120,25 +121,69 @@ llvm::Constant* easy::LinkPointerIfPossible(llvm::Module &M, easy::PtrArgument c
 
 std::pair<llvm::Constant*, size_t> easy::GetConstantFromRaw(llvm::DataLayout const& DL,
                                                             llvm::Type* T, const uint8_t* Raw) {
-  // pack in a I8 constant vector and cast
-  Type* I8 = Type::getInt8Ty(T->getContext());
-  size_t Size = DL.getTypeStoreSize(T); // TODO: not sure about this
-
-  SmallVector<Constant*, sizeof(uint64_t)> Elements(Size, nullptr);
-  for(size_t i = 0; i != Size; ++i) {
-    Elements[i] = ConstantInt::get(I8, Raw[i]);
-  }
-
-  Constant* DataAsI8 = ConstantVector::get(Elements);
-  Constant* DataAsT;
-  if(T->isPointerTy()) {
-    Type* TInt = DL.getIntPtrType(T->getContext());
-    Constant* DataAsTSizedInt = ConstantExpr::getBitCast(DataAsI8, TInt);
-    DataAsT = ConstantExpr::getIntToPtr(DataAsTSizedInt, T);
+  if (T->isIntegerTy()) {
+    IntegerType *ITy = dyn_cast<IntegerType>(T);
+    switch (ITy->getBitWidth())
+    {
+    case 8:
+      {
+        Type* I8 = Type::getInt8Ty(T->getContext());
+        return {ConstantInt::get(I8, Raw[0]), 1};
+      }
+      break;
+    case 16:
+      {
+        Type* I16 = Type::getInt16Ty(T->getContext());
+        return {ConstantInt::get(I16, ((int16_t*)Raw)[0]), 2};
+      }
+      break;
+    case 32:
+      {
+        Type* I32 = Type::getInt32Ty(T->getContext());
+        return {ConstantInt::get(I32, ((int32_t*)Raw)[0]), 4};
+      }
+      break;
+    case 64:
+      {
+        Type* I64 = Type::getInt64Ty(T->getContext());
+        return {ConstantInt::get(I64, ((int64_t*)Raw)[0]), 8};
+      }
+      break;
+    default:
+      errs() << "unkown bits num, type: " << *T << "\n";
+      break;
+    };
+  } else if (T->isFloatingPointTy()) {
+    if (T->isFloatTy()) {
+      Type* F = T->getFloatTy(T->getContext());
+      return {ConstantFP::get(F, *(float*)Raw), 4};
+    } else if (T->isDoubleTy()) {
+      Type* D = T->getDoubleTy(T->getContext());
+      return {ConstantFP::get(D, *(double*)Raw), 8};
+    } else {
+      errs() << "unkown bits num, type: " << *T << "\n";
+    }
   } else {
-    DataAsT = ConstantExpr::getBitCast(DataAsI8, T);
+    Type* I8 = Type::getInt8Ty(T->getContext());
+    size_t Size = DL.getTypeStoreSize(T); // TODO: not sure about this
+
+    SmallVector<Constant*, sizeof(uint64_t)> Elements(Size, nullptr);
+    for(size_t i = 0; i != Size; ++i) {
+      Elements[i] = ConstantInt::get(I8, Raw[i]);
+    }
+
+    Constant* DataAsI8 = ConstantVector::get(Elements);
+    Constant* DataAsT;
+    if(T->isPointerTy()) {
+      Type* TInt = DL.getIntPtrType(T->getContext());
+      Constant* DataAsTSizedInt = ConstantExpr::getBitCast(DataAsI8, TInt);
+      DataAsT = ConstantExpr::getIntToPtr(DataAsTSizedInt, T);
+    } else {
+      DataAsT = ConstantExpr::getBitCast(DataAsI8, T);
+    }
+    return {DataAsT, Size};
   }
-  return {DataAsT, Size};
+  return {nullptr, 0};
 }
 
 static
@@ -195,6 +240,113 @@ size_t StoreStructField(llvm::Module &M,
   return RawOffset;
 }
 
+static
+size_t StoreStructFieldPrepare(llvm::Module &M,
+                        llvm::DataLayout const &DL,
+                        Type* Ty,
+                        uint8_t const* Raw,
+                        std::map<void*, Constant*> &Funcs) {
+
+  StructType* STy = dyn_cast<StructType>(Ty);
+  size_t RawOffset = 0;
+  if(STy) {
+    //errs() << "struct " << *STy << "\n";
+    size_t Fields = STy->getStructNumElements();
+    for(size_t Field = 0; Field != Fields; ++Field) {
+      size_t Size = StoreStructFieldPrepare(M, DL, STy->getElementType(Field), Raw+RawOffset, Funcs);
+      RawOffset += Size;
+    }
+  } else {
+    ArrayType *ATy = dyn_cast<ArrayType>(Ty);
+    if (ATy) {
+      //errs() << "array " << *ATy << "\n";
+      size_t Fields = ATy->getArrayNumElements();
+      for(size_t Field = 0; Field != Fields; ++Field) {
+        size_t Size = StoreStructFieldPrepare(M, DL, ATy->getElementType(), Raw+RawOffset, Funcs);
+        RawOffset += Size;
+      }
+    } else {
+      if (Ty->isPointerTy()) {
+        auto PTy = Ty->getContainedType(0);
+        if (PTy->isFunctionTy()) {
+          void **p = (void**)Raw;
+          if (p && *p) {
+            easy::PtrArgument Ptr{*p};
+            auto c = LinkPointerIfPossible(M, Ptr, Ty);
+            Funcs[*p] = c;
+            errs() << "Link " << *PTy << "\n";
+            return 8;
+          } else {
+            return 8;
+          }
+        }
+        return 8;
+      }
+      Constant* FieldValue;
+      std::tie(FieldValue, RawOffset) = easy::GetConstantFromRaw(DL, Ty, (uint8_t const*)Raw);  
+    }
+  }
+  return RawOffset;
+}
+
+static
+size_t StoreStructFieldAsGlobal(llvm::Module &M,
+                        llvm::DataLayout const &DL,
+                        Type* Ty,
+                        uint8_t const* Raw,
+                        Constant*& CurConstant,
+                        std::map<void*, Constant*> &Funcs) {
+
+  StructType* STy = dyn_cast<StructType>(Ty);
+  size_t RawOffset = 0;
+  if(STy) {
+    //errs() << "struct " << *STy << "\n";
+    size_t Fields = STy->getStructNumElements();
+    SmallVector<Constant*, 4> Constants;
+    for(size_t Field = 0; Field != Fields; ++Field) {
+      size_t Size = StoreStructFieldAsGlobal(M, DL, STy->getElementType(Field), Raw+RawOffset, CurConstant, Funcs);
+      Constants.push_back(CurConstant);
+      RawOffset += Size;
+    }
+    CurConstant = ConstantStruct::get(STy, makeArrayRef(Constants));
+ } else {
+    ArrayType *ATy = dyn_cast<ArrayType>(Ty);
+    if (ATy) {
+      //errs() << "array " << *ATy << "\n";
+      size_t Fields = ATy->getArrayNumElements();
+      SmallVector<Constant*, 4> Constants;
+      for(size_t Field = 0; Field != Fields; ++Field) {
+        size_t Size = StoreStructFieldAsGlobal(M, DL, ATy->getElementType(), Raw+RawOffset, CurConstant, Funcs);
+        Constants.push_back(CurConstant);
+        RawOffset += Size;
+      }
+      CurConstant = ConstantArray::get(ATy, makeArrayRef(Constants));    
+    } else {
+      if (Ty->isPointerTy()) {
+        auto PTy = Ty->getContainedType(0);
+        if (PTy->isFunctionTy()) {
+          void **p = (void**)Raw;
+          if (p && *p) {
+            auto c = Funcs[*p];
+            CurConstant = c;
+            return 8;
+          } else {
+            CurConstant = ConstantPointerNull::get(dyn_cast<PointerType>(Ty));
+            return 8;
+          }
+        }
+        // http://peeterjoot.com/2017/03/30/llvm-ir-null-pointer-constants-and-function-pointers-a-wild-goose-chase-after-a-bad-assumption/
+        CurConstant = ConstantInt::get(dyn_cast<PointerType>(Ty)->getPointerTo(), *(int64_t*)Raw);
+        return 8;
+      }
+      Constant* FieldValue;
+      std::tie(FieldValue, RawOffset) = easy::GetConstantFromRaw(DL, Ty, (uint8_t const*)Raw);
+      CurConstant = FieldValue;     
+    }
+  }
+  return RawOffset;
+}
+
 llvm::AllocaInst* easy::GetStructAlloc(llvm::Module &M,
                                        llvm::IRBuilder<> &B,
                                        llvm::DataLayout const &DL,
@@ -211,4 +363,24 @@ llvm::AllocaInst* easy::GetStructAlloc(llvm::Module &M,
   size_t Size = StoreStructField(M, B, DL, StructTy, (uint8_t const*)Struct.get().data(), Alloc, GEP);
 
   return Alloc;
+}
+
+llvm::GlobalVariable* easy::GetGlobalStruct(llvm::Module &M,
+                                       llvm::IRBuilder<> &B,
+                                       llvm::DataLayout const &DL,
+                                       easy::StructArgument const &Struct,
+                                       llvm::Type* StructPtrTy) {
+  Type* StructTy = StructPtrTy->getContainedType(0);
+
+  Constant* CurConstant;
+  std::map<void*, Constant*> Funcs;
+
+  // try link functions between modules
+  StoreStructFieldPrepare(M, DL, StructTy, (uint8_t const*)Struct.get().data(), Funcs);
+  // https://reviews.llvm.org/rG7dac027ed7513f330567f3ae67e70ee13c7e34a5
+  size_t Size = StoreStructFieldAsGlobal(M, DL, StructTy, (uint8_t const*)Struct.get().data(), CurConstant, Funcs);
+
+  GlobalVariable *G = new GlobalVariable(M, StructTy, true,
+                                         GlobalVariable::InternalLinkage, CurConstant);
+  return G;
 }

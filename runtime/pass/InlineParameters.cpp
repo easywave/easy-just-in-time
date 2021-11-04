@@ -109,8 +109,8 @@ void GetInlineArgs(Module &M,
 
         if(ArgInF.StructByPointer_) {
           // struct is passed trough a pointer
-          AllocaInst* ParamAlloc = easy::GetStructAlloc(M, B, DL, *Struct, ArgInF.Types_[0]);
-          Args.push_back(ParamAlloc);
+          Constant* FieldValue = easy::GetGlobalStruct(M, B, DL, *Struct, ArgInF.Types_[0]);
+          Args.push_back(FieldValue);
         } else {
           // struct is passed by value (may be many values)
           size_t N = ArgInF.Types_.size();
