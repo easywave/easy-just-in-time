@@ -92,26 +92,26 @@ DeclareArgument(Module, easy::Function const&);
 
 class StructArgument
     : public ArgumentBase {
-  serialized_arg Data_;
+  std::vector<char> Data_;
 
   public:
-  StructArgument(serialized_arg &&arg)
-    : ArgumentBase(), Data_(arg) {}
+  StructArgument(const char* Str, size_t Size)
+    : ArgumentBase(), Data_(Str, Str+Size) {};  
   virtual ~StructArgument() override = default;
-  std::vector<char> const & get() const { return Data_.buf; }
+  std::vector<char> const & get() const { return Data_; }
   static constexpr ArgumentKind Kind = AK_Struct;
   ArgumentKind kind() const noexcept override  { return Kind; }
 
   protected:
   bool compareWithSameType(ArgumentBase const& Other) const override {
     auto const &OtherCast = static_cast<StructArgument const&>(Other);
-    return get() == OtherCast.get();
+    return Data_ == OtherCast.Data_;
   }
 
   size_t hash() const noexcept override {
     std::hash<int64_t> hash{};
     size_t R = 0;
-    for (char c : get())
+    for (char c : Data_)
       R ^= hash(c);
     return R;
   }
@@ -153,7 +153,7 @@ class Context {
   Context& setParameterInt(int64_t);
   Context& setParameterFloat(double);
   Context& setParameterPointer(void const*);
-  Context& setParameterStruct(serialized_arg);
+  Context& setParameterStruct(char const*, size_t);
   Context& setParameterModule(easy::Function const&);
 
   Context& setArgumentLayout(layout_id id) {
@@ -168,6 +168,11 @@ class Context {
   template<class T>
   Context& setParameterTypedPointer(T* ptr) {
     return setParameterPointer(reinterpret_cast<const void*>(ptr));
+  }
+
+  template<class T>
+  Context& setParameterTypedStruct(T* ptr) {
+    return setParameterStruct(reinterpret_cast<char const*>(ptr), sizeof(T));
   }
 
   Context& setOptLevel(unsigned OptLevel, unsigned OptSize) {

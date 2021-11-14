@@ -18,8 +18,8 @@ Context& Context::setParameterPointer(const void* val) {
   return setArg<PtrArgument>(val);
 }
 
-Context& Context::setParameterStruct(serialized_arg arg) {
-  return setArg<StructArgument>(std::move(arg));
+Context& Context::setParameterStruct(char const* ptr, size_t size) {
+  return setArg<StructArgument>(ptr, size);
 }
 
 Context& Context::setParameterModule(easy::Function const &F) {

@@ -107,7 +107,7 @@ struct set_parameter_helper<false> {
   template<class Param, class Arg>
   static void set_param(Context &C,
                         _if<std::is_class<Param>::value, Arg> &&arg) {
-    C.setParameterStruct(layout::serialize_arg<Param>(arg));
+    C.setParameterTypedStruct(std::addressof(arg));
   }
 };
 
@@ -152,7 +152,6 @@ set_parameters(ParameterList,
   using Param0 = typename ParameterList::head;
   using ParametersTail = typename ParameterList::tail;
 
-  layout::set_layout<Param0>(C);
   set_parameter<Param0, Arg0>::help::template set_param<Param0, Arg0>(C, std::forward<Arg0>(arg0));
   set_parameters<ParametersTail, Args&&...>(ParametersTail(), C, std::forward<Args>(args)...);
 }

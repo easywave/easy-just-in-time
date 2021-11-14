@@ -47,17 +47,13 @@ namespace easy {
 
     bool runOnModule(Module &M) override {
 
-      // execute the rest of the easy::jit passes
-      legacy::PassManager Passes;
-      Passes.add(easy::createRegisterLayoutPass());
-      bool Changed = Passes.run(M);
 
       SmallVector<GlobalObject*, 8> ObjectsToJIT;
 
       collectObjectsToJIT(M, ObjectsToJIT);
 
       if(ObjectsToJIT.empty())
-        return Changed;
+        return false;
 
       SmallVector<GlobalValue*, 8> LocalVariables;
       collectLocalGlobals(M, LocalVariables);
@@ -69,7 +65,7 @@ namespace easy {
       Function* RegisterBitcodeFun = declareRegisterBitcode(M, GlobalMapping);
       registerBitcode(M, ObjectsToJIT, Bitcode, GlobalMapping, RegisterBitcodeFun);
 
-      return Changed;
+      return true;
     }
 
     private:

@@ -23,7 +23,19 @@ HighLevelLayout::HighLevelLayout(easy::Context const& C, llvm::Function &F) {
   size_t ArgIdx = 0;
   if(StructReturn_)
     ParamIdx++;
+  for (size_t i = 0; i < FTy->params().size(); i++) {
+    Args_.emplace_back(ArgIdx, ParamIdx);
+    HighLevelArg& Arg = Args_.back();
 
+    size_t ArgEnd = (ParamIdx+1);
+
+    Type* ParamTy = FTy->getParamType(ParamIdx);
+    Arg.Types_.push_back(ParamTy);
+    Arg.StructByPointer_ = ParamTy->isPointerTy();
+    ++ParamIdx;
+    ++ArgIdx;
+  }
+  /*
   for(easy::layout_id lid : C.getLayout()) {
     size_t N = BT.getLayoutInfo(lid).NumFields;
 
@@ -44,7 +56,7 @@ HighLevelLayout::HighLevelLayout(easy::Context const& C, llvm::Function &F) {
         Arg.Types_.push_back(FTy->getParamType(ParamIdx));
       ++ArgIdx;
     }
-  }
+  }*/
 }
 
 llvm::SmallVector<llvm::Value*, 4>
@@ -241,29 +253,31 @@ size_t StoreStructField(llvm::Module &M,
 }
 
 static
-size_t StoreStructFieldPrepare(llvm::Module &M,
+void StoreStructFieldPrepare(llvm::Module &M,
                         llvm::DataLayout const &DL,
                         Type* Ty,
                         uint8_t const* Raw,
                         std::map<void*, Constant*> &Funcs) {
 
   StructType* STy = dyn_cast<StructType>(Ty);
-  size_t RawOffset = 0;
+  const auto& Layout = M.getDataLayout();
   if(STy) {
     //errs() << "struct " << *STy << "\n";
     size_t Fields = STy->getStructNumElements();
+    const auto StructLayout = Layout.getStructLayout(STy);
     for(size_t Field = 0; Field != Fields; ++Field) {
-      size_t Size = StoreStructFieldPrepare(M, DL, STy->getElementType(Field), Raw+RawOffset, Funcs);
-      RawOffset += Size;
+      auto offset = StructLayout->getElementOffset(Field);
+      StoreStructFieldPrepare(M, DL, STy->getElementType(Field), Raw+offset, Funcs);
     }
   } else {
     ArrayType *ATy = dyn_cast<ArrayType>(Ty);
     if (ATy) {
       //errs() << "array " << *ATy << "\n";
       size_t Fields = ATy->getArrayNumElements();
+      const auto EleTy = ATy->getElementType();
+      auto EleSize = Layout.getTypeAllocSize(EleTy);
       for(size_t Field = 0; Field != Fields; ++Field) {
-        size_t Size = StoreStructFieldPrepare(M, DL, ATy->getElementType(), Raw+RawOffset, Funcs);
-        RawOffset += Size;
+        StoreStructFieldPrepare(M, DL, EleTy, Raw+EleSize*Field, Funcs);
       }
     } else {
       if (Ty->isPointerTy()) {
@@ -275,22 +289,22 @@ size_t StoreStructFieldPrepare(llvm::Module &M,
             auto c = LinkPointerIfPossible(M, Ptr, Ty);
             Funcs[*p] = c;
             errs() << "Link " << *PTy << "\n";
-            return 8;
+            return;
           } else {
-            return 8;
+            return;
           }
         }
-        return 8;
+        return;
       }
       Constant* FieldValue;
-      std::tie(FieldValue, RawOffset) = easy::GetConstantFromRaw(DL, Ty, (uint8_t const*)Raw);  
+      size_t dummy;
+      std::tie(FieldValue, dummy) = easy::GetConstantFromRaw(DL, Ty, (uint8_t const*)Raw);  
     }
   }
-  return RawOffset;
 }
 
 static
-size_t StoreStructFieldAsGlobal(llvm::Module &M,
+void StoreStructFieldAsGlobal(llvm::Module &M,
                         llvm::DataLayout const &DL,
                         Type* Ty,
                         uint8_t const* Raw,
@@ -298,15 +312,16 @@ size_t StoreStructFieldAsGlobal(llvm::Module &M,
                         std::map<void*, Constant*> &Funcs) {
 
   StructType* STy = dyn_cast<StructType>(Ty);
-  size_t RawOffset = 0;
+  const auto& Layout = M.getDataLayout();
   if(STy) {
     //errs() << "struct " << *STy << "\n";
     size_t Fields = STy->getStructNumElements();
+    const auto StructLayout = Layout.getStructLayout(STy);
     SmallVector<Constant*, 4> Constants;
     for(size_t Field = 0; Field != Fields; ++Field) {
-      size_t Size = StoreStructFieldAsGlobal(M, DL, STy->getElementType(Field), Raw+RawOffset, CurConstant, Funcs);
+      auto offset = StructLayout->getElementOffset(Field);
+      StoreStructFieldAsGlobal(M, DL, STy->getElementType(Field), Raw+offset, CurConstant, Funcs);
       Constants.push_back(CurConstant);
-      RawOffset += Size;
     }
     CurConstant = ConstantStruct::get(STy, makeArrayRef(Constants));
  } else {
@@ -314,11 +329,12 @@ size_t StoreStructFieldAsGlobal(llvm::Module &M,
     if (ATy) {
       //errs() << "array " << *ATy << "\n";
       size_t Fields = ATy->getArrayNumElements();
+      const auto EleTy = ATy->getElementType();
+      auto EleSize = Layout.getTypeAllocSize(EleTy);
       SmallVector<Constant*, 4> Constants;
       for(size_t Field = 0; Field != Fields; ++Field) {
-        size_t Size = StoreStructFieldAsGlobal(M, DL, ATy->getElementType(), Raw+RawOffset, CurConstant, Funcs);
+        StoreStructFieldAsGlobal(M, DL, ATy->getElementType(), Raw+Field*EleSize, CurConstant, Funcs);
         Constants.push_back(CurConstant);
-        RawOffset += Size;
       }
       CurConstant = ConstantArray::get(ATy, makeArrayRef(Constants));    
     } else {
@@ -329,22 +345,22 @@ size_t StoreStructFieldAsGlobal(llvm::Module &M,
           if (p && *p) {
             auto c = Funcs[*p];
             CurConstant = c;
-            return 8;
+            return ;
           } else {
             CurConstant = ConstantPointerNull::get(dyn_cast<PointerType>(Ty));
-            return 8;
+            return ;
           }
         }
         // http://peeterjoot.com/2017/03/30/llvm-ir-null-pointer-constants-and-function-pointers-a-wild-goose-chase-after-a-bad-assumption/
         CurConstant = ConstantInt::get(dyn_cast<PointerType>(Ty)->getPointerTo(), *(int64_t*)Raw);
-        return 8;
+        return ;
       }
       Constant* FieldValue;
-      std::tie(FieldValue, RawOffset) = easy::GetConstantFromRaw(DL, Ty, (uint8_t const*)Raw);
+      size_t dummy;
+      std::tie(FieldValue, dummy) = easy::GetConstantFromRaw(DL, Ty, (uint8_t const*)Raw);
       CurConstant = FieldValue;     
     }
   }
-  return RawOffset;
 }
 
 llvm::AllocaInst* easy::GetStructAlloc(llvm::Module &M,
@@ -378,7 +394,7 @@ llvm::GlobalVariable* easy::GetGlobalStruct(llvm::Module &M,
   // try link functions between modules
   StoreStructFieldPrepare(M, DL, StructTy, (uint8_t const*)Struct.get().data(), Funcs);
   // https://reviews.llvm.org/rG7dac027ed7513f330567f3ae67e70ee13c7e34a5
-  size_t Size = StoreStructFieldAsGlobal(M, DL, StructTy, (uint8_t const*)Struct.get().data(), CurConstant, Funcs);
+  StoreStructFieldAsGlobal(M, DL, StructTy, (uint8_t const*)Struct.get().data(), CurConstant, Funcs);
 
   GlobalVariable *G = new GlobalVariable(M, StructTy, true,
                                          GlobalVariable::InternalLinkage, CurConstant);
