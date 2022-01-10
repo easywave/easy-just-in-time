@@ -122,7 +122,7 @@ llvm::Constant* easy::LinkPointerIfPossible(llvm::Module &M, easy::PtrArgument c
       }
       else if(llvm::Function* F = dyn_cast<llvm::Function>(GV)) {
         F->setLinkage(llvm::Function::PrivateLinkage);
-        F->addFnAttr(llvm::Attribute::AlwaysInline);
+        //F->addFnAttr(llvm::Attribute::AlwaysInline);
         return F;
       }
       assert(false && "wtf");
